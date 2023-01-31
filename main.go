@@ -21,6 +21,15 @@ func main() {
 		args = []string{"-"}
 	}
 
+	var (
+		lines      int
+		words      int
+		chars      int
+		totalLines int
+		totalWords int
+		totalChars int
+	)
+
 	for _, arg := range args {
 		var file *os.File
 		var err error
@@ -29,17 +38,22 @@ func main() {
 		} else {
 			file, err = os.Open(arg)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "%s: %s\n", arg, err)
-				continue
+				fmt.Fprintf(os.Stderr, "./wc: %s\n", err)
+				return
 			}
 			defer file.Close()
+
+			fileInfo, err := file.Stat()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "./wc: %s\n", err)
+				continue
+			}
+			if fileInfo.IsDir() {
+				fmt.Fprintf(os.Stderr, "./wc %s: read: is a directory\n", arg)
+				continue
+			}
 		}
 
-		var (
-			lines int
-			words int
-			chars int
-		)
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
 			lines++
@@ -61,5 +75,26 @@ func main() {
 			fmt.Printf("%8d", chars)
 		}
 		fmt.Printf(" %s\n", arg)
+
+		if len(args) > 1 {
+			totalLines += lines
+			totalWords += words
+			totalChars += chars
+			lines, words, chars = 0, 0, 0
+		}
 	}
+
+	if len(args) > 1 {
+		if *linesFlag {
+			fmt.Printf("%8d", totalLines)
+		}
+		if *wordsFlag {
+			fmt.Printf("%8d", totalWords)
+		}
+		if *charsFlag {
+			fmt.Printf("%8d", totalChars)
+		}
+		fmt.Printf(" total\n")
+	}
+
 }
