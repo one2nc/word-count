@@ -18,7 +18,37 @@ var rootCmd = &cobra.Command{
 	Use:   "wc",
 	Short: "wc is a word, line, and character count tool",
 	Long:  `wc is a word, line, and character count tool that reads from the standard input or from a file and outputs the number of lines, words, and characters`,
-	Run:   run,
+	Run: func(cmd *cobra.Command, args []string) {
+		var totalLineCount, totalWordCount, totalCharCount int
+
+		// If length args is equal to '0' then set args as "-" to be identified as os.Stdin
+		if len(args) == 0 {
+			args = []string{"-"}
+		}
+
+		for _, arg := range args {
+			fileContents, err := readFile(arg)
+			if err != nil {
+				return
+			}
+			lineCount, wordCount, charCount := count(fileContents)
+			totalLineCount += lineCount
+			totalWordCount += wordCount
+			totalCharCount += charCount
+
+			printResult(lineCount, wordCount, charCount, arg)
+		}
+
+		// print total only if more than one file is passed
+		if len(args) > 1 {
+			printResult(
+				totalLineCount,
+				totalWordCount,
+				totalCharCount,
+				"total",
+			)
+		}
+	},
 }
 
 func main() {
@@ -29,50 +59,17 @@ func main() {
 
 	// Execute the cobra command
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Println(err)
+		fmt.Fprint(os.Stderr, err.Error())
 		os.Exit(1)
 	}
 }
 
-func run(cmd *cobra.Command, args []string) {
-	var totalLineCount, totalWordCount, totalCharCount int
-
-	// If length args is equal to '0' then set args as "-" to be identified as os.Stdin
-	if len(args) == 0 {
-		args = []string{"-"}
-	}
-
-	for _, arg := range args {
-		fileContents, err := readFile(cmd, arg)
-		if err != nil {
-			return
-		}
-		lineCount, wordCount, charCount := count(fileContents)
-		totalLineCount += lineCount
-		totalWordCount += wordCount
-		totalCharCount += charCount
-
-		printResult(cmd, lineCount, wordCount, charCount, arg)
-	}
-
-	// print total only if more than one file is passed
-	if len(args) > 1 {
-		printResult(
-			cmd,
-			totalLineCount,
-			totalWordCount,
-			totalCharCount,
-			"total",
-		)
-	}
-}
-
-func readFile(cmd *cobra.Command, arg string) (fileContents []byte, err error) {
+func readFile(arg string) (fileContents []byte, err error) {
 	if arg == "-" {
 		fileContents, err = io.ReadAll(os.Stdin)
 		if err != nil {
 			fmt.Fprint(
-				cmd.ErrOrStderr(),
+				os.Stderr,
 				"wc: ",
 				strings.Replace(err.Error(), "open ", "", 1),
 				"\n",
@@ -84,7 +81,7 @@ func readFile(cmd *cobra.Command, arg string) (fileContents []byte, err error) {
 	fileContents, err = os.ReadFile(arg)
 	if err != nil {
 		fmt.Fprint(
-			cmd.ErrOrStderr(),
+			os.Stderr,
 			"wc: ",
 			strings.Replace(err.Error(), "open ", "", 1),
 			"\n",
@@ -101,26 +98,26 @@ func count(fileContents []byte) (lineCount, wordCount, charCount int) {
 	return
 }
 
-func printResult(cmd *cobra.Command, lineCount, wordCount, charCount int, file string) {
+func printResult(lineCount, wordCount, charCount int, file string) {
 	// print only if lineFlag is set
 	if lineFlag {
-		fmt.Fprintf(cmd.OutOrStdout(), "%8d", lineCount)
+		fmt.Fprintf(os.Stdout, "%8d", lineCount)
 	}
 
 	// print only if wordFlag is set
 	if wordFlag {
-		fmt.Fprintf(cmd.OutOrStdout(), "%8d", wordCount)
+		fmt.Fprintf(os.Stdout, "%8d", wordCount)
 	}
 
 	// print only if charFlag is set
 	if charFlag {
-		fmt.Fprintf(cmd.OutOrStdout(), "%8d", charCount)
+		fmt.Fprintf(os.Stdout, "%8d", charCount)
 	}
 
 	// print the filename only if reading from a file intead of os.Stdin after printing the count
 	if file == "-" {
-		fmt.Fprint(cmd.OutOrStdout(), "\n")
+		fmt.Fprint(os.Stdout, "\n")
 	} else {
-		fmt.Fprint(cmd.OutOrStdout(), " "+file+"\n")
+		fmt.Fprint(os.Stdout, " "+file+"\n")
 	}
 }
