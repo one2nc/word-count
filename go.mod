@@ -1,4 +1,4 @@
-module one2nc/word-count
+module one2nc/gowc
 
 go 1.19
 
