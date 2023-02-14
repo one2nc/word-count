@@ -19,3 +19,6 @@
 
 #benchmarking
 shakespeare-db
+
+#testing
+test/no_permissions.txt
