@@ -16,6 +16,14 @@ type flagOptions struct {
 	charFlag bool
 }
 
+type result struct {
+	lineCount int
+	wordCount int
+	charCount int
+	filename  string
+	err       error
+}
+
 var (
 	flagSet                                        flagOptions
 	totalLineCount, totalWordCount, totalCharCount int
@@ -50,7 +58,8 @@ var rootCmd = &cobra.Command{
 		var wg sync.WaitGroup
 		for _, arg := range args {
 			lines := make(chan string)
-			go worker(lines, arg, &wg)
+			errChan := make(chan error)
+			go worker(lines, errChan, arg, &wg)
 			wg.Add(1)
 		}
 
@@ -58,108 +67,140 @@ var rootCmd = &cobra.Command{
 
 		// print total only if more than one file is passed
 		if len(args) > 1 {
-			totalResult := generateResult(
-				totalLineCount,
-				totalWordCount,
-				totalCharCount,
-				"total",
+			totalResult, err := generateResult(
+				result{
+					lineCount: totalLineCount,
+					wordCount: totalWordCount,
+					charCount: totalCharCount,
+					filename:  "total",
+				},
 			)
+			if err != nil {
+				printToStderr(err)
+			}
 			printToStdout(totalResult)
 		}
 	},
 }
 
-func worker(lines chan string, arg string, wg *sync.WaitGroup) {
+func worker(lines chan string, errChan chan error, arg string, wg *sync.WaitGroup) {
 	defer wg.Done()
-	go readLinesInFile(arg, lines)
+	go readLinesInFile(arg, lines, errChan)
 
-	lineCount, wordCount, charCount := count(lines)
-	totalLineCount += lineCount
-	totalWordCount += wordCount
-	totalCharCount += charCount
+	countResult := count(lines, errChan)
+	totalLineCount += countResult.lineCount
+	totalWordCount += countResult.wordCount
+	totalCharCount += countResult.charCount
+	countResult.filename = arg
 
-	result := generateResult(lineCount, wordCount, charCount, arg)
+	result, err := generateResult(countResult)
+	if err != nil {
+		printToStderr(err)
+	}
 	printToStdout(result)
 }
 
-func readLinesInFile(arg string, lines chan<- string) {
+func readLinesInFile(arg string, lines chan<- string, errChan chan<- error) {
 	var scanner *bufio.Scanner
 
 	const chunkSize = 1024 * 1024 // 1 MB
 	defer close(lines)
+	defer close(errChan)
 
 	if arg == "-" {
 		scanner = bufio.NewScanner(os.Stdin)
+		scanner.Buffer(make([]byte, chunkSize), chunkSize)
+
+		for scanner.Scan() {
+			line := scanner.Text()
+			lines <- line
+		}
+
+		if err := scanner.Err(); err != nil {
+			err = fmt.Errorf(
+				"gowc: " + strings.Replace(err.Error(), "read ", "", 1) + "\n",
+			)
+			errChan <- err
+		}
 	} else {
 		file, err := os.Open(arg)
 		if err != nil {
 			err = fmt.Errorf(
 				"gowc: " + strings.Replace(err.Error(), "open ", "", 1) + "\n",
 			)
-			printToStderr(err)
+			errChan <- err
 		}
 		defer file.Close()
-		scanner = bufio.NewScanner(file)
-	}
+		if err == nil {
+			scanner = bufio.NewScanner(file)
+			scanner.Buffer(make([]byte, chunkSize), chunkSize)
 
-	scanner.Buffer(make([]byte, chunkSize), chunkSize)
+			for scanner.Scan() {
+				line := scanner.Text()
+				lines <- line
+			}
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		lines <- line
-	}
-
-	if err := scanner.Err(); err != nil {
-		err = fmt.Errorf(
-			"gowc: " + strings.Replace(err.Error(), "read ", "", 1) + "\n",
-		)
-		printToStderr(err)
+			if err := scanner.Err(); err != nil {
+				err = fmt.Errorf(
+					"gowc: " + strings.Replace(err.Error(), "read ", "", 1) + "\n",
+				)
+				errChan <- err
+			}
+		}
 	}
 }
 
-func count(lines <-chan string) (int, int, int) {
-	var lineCount, wordCount, charCount int
+func count(lines <-chan string, errChan <-chan error) result {
+	var res result
 	for line := range lines {
-		lineCount++
+		res.lineCount++
 		words := strings.Fields(line)
-		wordCount += len(words)
-		charCount += len(line) + 1
+		res.wordCount += len(words)
+		res.charCount += len(line) + 1
 	}
 
-	return lineCount, wordCount, charCount
+	for err := range errChan {
+		res.err = err
+	}
+
+	return res
 }
 
-func generateResult(lineCount, wordCount, charCount int, file string) string {
-	var result string
+func generateResult(r result) (string, error) {
+	var output string
+
+	if r.err != nil {
+		return "", r.err
+	}
 	// append only if lineFlag is set
 	if flagSet.lineFlag {
-		result += fmt.Sprintf("%8d", lineCount)
+		output += fmt.Sprintf("%8d", r.lineCount)
 	}
 
 	// append only if wordFlag is set
 	if flagSet.wordFlag {
-		result += fmt.Sprintf("%8d", wordCount)
+		output += fmt.Sprintf("%8d", r.wordCount)
 	}
 
 	// append only if charFlag is set
 	if flagSet.charFlag {
-		result += fmt.Sprintf("%8d", charCount)
+		output += fmt.Sprintf("%8d", r.charCount)
 	}
 
 	if !flagSet.lineFlag && !flagSet.wordFlag && !flagSet.charFlag {
-		result += fmt.Sprintf("%8d", lineCount)
-		result += fmt.Sprintf("%8d", wordCount)
-		result += fmt.Sprintf("%8d", charCount)
+		output += fmt.Sprintf("%8d", r.lineCount)
+		output += fmt.Sprintf("%8d", r.wordCount)
+		output += fmt.Sprintf("%8d", r.charCount)
 	}
 
 	// append the filename only if reading from a file intead of os.Stdin after appending the count
-	if file == "-" {
-		result += "\n"
+	if r.filename == "-" {
+		output += "\n"
 	} else {
-		result += fmt.Sprint(" " + file + "\n")
+		output += fmt.Sprint(" " + r.filename + "\n")
 	}
 
-	return result
+	return output, nil
 }
 
 func printToStderr(err error) {
