@@ -29,6 +29,8 @@ var (
 	totalLineCount, totalWordCount, totalCharCount int
 )
 
+const maxOpenFileLimit = 1024
+
 func init() {
 	// Add flags to count lines, words, and characters
 	rootCmd.Flags().BoolVarP(&flagSet.lineFlag, "lines", "l", false, "Count number of lines")
@@ -57,7 +59,7 @@ var rootCmd = &cobra.Command{
 
 		var wg sync.WaitGroup
 		for _, arg := range args {
-			lines := make(chan string)
+			lines := make(chan string, maxOpenFileLimit)
 			errChan := make(chan error)
 			go worker(lines, errChan, arg, &wg)
 			wg.Add(1)
@@ -131,36 +133,38 @@ func readLinesInFile(arg string, lines chan<- string, errChan chan<- error) {
 			errChan <- err
 		}
 		defer file.Close()
-		if err == nil {
-			scanner = bufio.NewScanner(file)
-			scanner.Buffer(make([]byte, chunkSize), chunkSize)
+		scanner = bufio.NewScanner(file)
+		scanner.Buffer(make([]byte, chunkSize), chunkSize)
 
-			for scanner.Scan() {
-				line := scanner.Text()
-				lines <- line
-			}
+		for scanner.Scan() {
+			line := scanner.Text()
+			lines <- line
+		}
 
-			if err := scanner.Err(); err != nil {
-				err = fmt.Errorf(
-					"gowc: " + strings.Replace(err.Error(), "read ", "", 1) + "\n",
-				)
-				errChan <- err
-			}
+		if err := scanner.Err(); err != nil {
+			err = fmt.Errorf(
+				"gowc: " + strings.Replace(err.Error(), "read ", "", 1) + "\n",
+			)
+			errChan <- err
 		}
 	}
 }
 
 func count(lines <-chan string, errChan <-chan error) result {
 	var res result
+
+	for err := range errChan {
+		if err != nil {
+			res.err = err
+			return res
+		}
+	}
+
 	for line := range lines {
 		res.lineCount++
 		words := strings.Fields(line)
 		res.wordCount += len(words)
 		res.charCount += len(line) + 1
-	}
-
-	for err := range errChan {
-		res.err = err
 	}
 
 	return res
@@ -172,6 +176,7 @@ func generateResult(r result) (string, error) {
 	if r.err != nil {
 		return "", r.err
 	}
+
 	// append only if lineFlag is set
 	if flagSet.lineFlag {
 		output += fmt.Sprintf("%8d", r.lineCount)
