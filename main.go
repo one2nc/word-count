@@ -16,14 +16,6 @@ type flagOptions struct {
 	charFlag bool
 }
 
-type result struct {
-	lineCount int
-	wordCount int
-	charCount int
-	filename  string
-	err       error
-}
-
 var (
 	flagSet                                        flagOptions
 	totalLineCount, totalWordCount, totalCharCount int
@@ -67,20 +59,26 @@ var rootCmd = &cobra.Command{
 
 		// print total only if more than one file is passed
 		if len(args) > 1 {
-			totalResult, err := generateResult(
-				result{
-					lineCount: totalLineCount,
-					wordCount: totalWordCount,
-					charCount: totalCharCount,
-					filename:  "total",
-				},
-			)
+			totalResult, err := result{
+				lineCount: totalLineCount,
+				wordCount: totalWordCount,
+				charCount: totalCharCount,
+				filename:  "total",
+			}.generateOutput()
 			if err != nil {
 				printToStderr(err)
 			}
 			printToStdout(totalResult)
 		}
 	},
+}
+
+type result struct {
+	lineCount int
+	wordCount int
+	charCount int
+	filename  string
+	err       error
 }
 
 func worker(arg string, wg *sync.WaitGroup) {
@@ -91,19 +89,19 @@ func worker(arg string, wg *sync.WaitGroup) {
 	//keep reading lines from files and let the count function run as it happens.
 	go readLinesInFile(arg, lines, errChan)
 
-	countResult := count(lines, errChan)
-	totalLineCount += countResult.lineCount
-	totalWordCount += countResult.wordCount
-	totalCharCount += countResult.charCount
-	countResult.filename = arg
+	result := count(lines, errChan)
+	totalLineCount += result.lineCount
+	totalWordCount += result.wordCount
+	totalCharCount += result.charCount
+	result.filename = arg
 
-	result, err := generateResult(countResult)
+	output, err := result.generateOutput()
 	if err != nil {
 		printToStderr(err)
 		return
 	}
 
-	printToStdout(result)
+	printToStdout(output)
 }
 
 func readLinesInFile(filename string, lines chan<- string, errChan chan<- error) {
@@ -116,18 +114,6 @@ func readLinesInFile(filename string, lines chan<- string, errChan chan<- error)
 	if filename == "-" {
 		scanner = bufio.NewScanner(os.Stdin)
 		scanner.Buffer(make([]byte, chunkSize), chunkSize)
-
-		for scanner.Scan() {
-			line := scanner.Text()
-			lines <- line // send line to the channel
-		}
-
-		if err := scanner.Err(); err != nil {
-			err = fmt.Errorf(
-				"gowc: " + strings.Replace(err.Error(), "read ", "", 1) + "\n",
-			)
-			errChan <- err
-		}
 	} else {
 		file, err := os.Open(filename)
 		if err != nil {
@@ -139,18 +125,18 @@ func readLinesInFile(filename string, lines chan<- string, errChan chan<- error)
 		defer file.Close()
 		scanner = bufio.NewScanner(file)
 		scanner.Buffer(make([]byte, chunkSize), chunkSize)
+	}
 
-		for scanner.Scan() {
-			line := scanner.Text()
-			lines <- line // send line to the channel
-		}
+	for scanner.Scan() {
+		line := scanner.Text()
+		lines <- line // send line to the channel
+	}
 
-		if err := scanner.Err(); err != nil {
-			err = fmt.Errorf(
-				"gowc: " + strings.Replace(err.Error(), "read ", "", 1) + "\n",
-			)
-			errChan <- err
-		}
+	if err := scanner.Err(); err != nil {
+		err = fmt.Errorf(
+			"gowc: " + strings.Replace(err.Error(), "read ", "", 1) + "\n",
+		)
+		errChan <- err
 	}
 }
 
@@ -177,7 +163,7 @@ func count(lines <-chan string, errChan <-chan error) result {
 	}
 }
 
-func generateResult(r result) (string, error) {
+func (r result) generateOutput() (string, error) {
 	var output string
 
 	if r.err != nil {
