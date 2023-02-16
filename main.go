@@ -21,7 +21,7 @@ var (
 	totalLineCount, totalWordCount, totalCharCount int
 )
 
-// const maxOpenFileLimit = 1024
+const maxOpenFileLimit = 10
 
 func init() {
 	// Add flags to count lines, words, and characters
@@ -50,8 +50,9 @@ var rootCmd = &cobra.Command{
 		}
 
 		var wg sync.WaitGroup
+		maxOpenFilesLimitBuffer := make(chan int, maxOpenFileLimit)
 		for _, arg := range args {
-			go worker(arg, &wg)
+			go worker(arg, &wg, maxOpenFilesLimitBuffer)
 			wg.Add(1)
 		}
 
@@ -81,10 +82,14 @@ type result struct {
 	err       error
 }
 
-func worker(arg string, wg *sync.WaitGroup) {
+func worker(arg string, wg *sync.WaitGroup, maxOpenFileLimitBuffer chan int) {
 	lines := make(chan string)
 	errChan := make(chan error)
-	defer wg.Done()
+	maxOpenFileLimitBuffer <- 1
+	defer func() {
+		wg.Done()
+		<-maxOpenFileLimitBuffer
+	}()
 
 	//keep reading lines from files and let the count function run as it happens.
 	go readLinesInFile(arg, lines, errChan)
