@@ -29,7 +29,7 @@ var (
 	totalLineCount, totalWordCount, totalCharCount int
 )
 
-const maxOpenFileLimit = 1024
+// const maxOpenFileLimit = 1024
 
 func init() {
 	// Add flags to count lines, words, and characters
@@ -59,9 +59,7 @@ var rootCmd = &cobra.Command{
 
 		var wg sync.WaitGroup
 		for _, arg := range args {
-			lines := make(chan string, maxOpenFileLimit)
-			errChan := make(chan error)
-			go worker(lines, errChan, arg, &wg)
+			go worker(arg, &wg)
 			wg.Add(1)
 		}
 
@@ -85,8 +83,12 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-func worker(lines chan string, errChan chan error, arg string, wg *sync.WaitGroup) {
+func worker(arg string, wg *sync.WaitGroup) {
+	lines := make(chan string)
+	errChan := make(chan error)
 	defer wg.Done()
+
+	//keep reading lines from files and let the count function run as it happens.
 	go readLinesInFile(arg, lines, errChan)
 
 	countResult := count(lines, errChan)
@@ -98,24 +100,26 @@ func worker(lines chan string, errChan chan error, arg string, wg *sync.WaitGrou
 	result, err := generateResult(countResult)
 	if err != nil {
 		printToStderr(err)
+		return
 	}
+
 	printToStdout(result)
 }
 
-func readLinesInFile(arg string, lines chan<- string, errChan chan<- error) {
+func readLinesInFile(filename string, lines chan<- string, errChan chan<- error) {
 	var scanner *bufio.Scanner
 
 	const chunkSize = 1024 * 1024 // 1 MB
 	defer close(lines)
 	defer close(errChan)
 
-	if arg == "-" {
+	if filename == "-" {
 		scanner = bufio.NewScanner(os.Stdin)
 		scanner.Buffer(make([]byte, chunkSize), chunkSize)
 
 		for scanner.Scan() {
 			line := scanner.Text()
-			lines <- line
+			lines <- line // send line to the channel
 		}
 
 		if err := scanner.Err(); err != nil {
@@ -125,7 +129,7 @@ func readLinesInFile(arg string, lines chan<- string, errChan chan<- error) {
 			errChan <- err
 		}
 	} else {
-		file, err := os.Open(arg)
+		file, err := os.Open(filename)
 		if err != nil {
 			err = fmt.Errorf(
 				"gowc: " + strings.Replace(err.Error(), "open ", "", 1) + "\n",
@@ -138,7 +142,7 @@ func readLinesInFile(arg string, lines chan<- string, errChan chan<- error) {
 
 		for scanner.Scan() {
 			line := scanner.Text()
-			lines <- line
+			lines <- line // send line to the channel
 		}
 
 		if err := scanner.Err(); err != nil {
@@ -151,23 +155,26 @@ func readLinesInFile(arg string, lines chan<- string, errChan chan<- error) {
 }
 
 func count(lines <-chan string, errChan <-chan error) result {
-	var res result
+	var r result
 
-	for err := range errChan {
-		if err != nil {
-			res.err = err
-			return res
+	for {
+		select {
+		case err := <-errChan:
+			if err != nil {
+				r.err = err
+				errChan = nil
+				return r
+			}
+		case line, ok := <-lines:
+			if !ok {
+				return r
+			}
+			r.lineCount++
+			words := strings.Fields(line)
+			r.wordCount += len(words)
+			r.charCount += len(line) + 1
 		}
 	}
-
-	for line := range lines {
-		res.lineCount++
-		words := strings.Fields(line)
-		res.wordCount += len(words)
-		res.charCount += len(line) + 1
-	}
-
-	return res
 }
 
 func generateResult(r result) (string, error) {
